@@ -2,12 +2,15 @@
 
 ```mermaid
 flowchart LR
-  Events[main.lua event frame] --> Sampler[periodic sampler]
-  Sampler --> MainDB[SwingBarMidnightDB when present]
-  Sampler --> Log[log.lua]
-  Log --> DebugDB[SwingBarMidnightDebuggerDB]
-  Log --> UI[ui.lua]
+  TOC[log.lua then ui.lua then main.lua] --> Logger[ns logger]
+  Events[Combat / overlay / speed / cast events] --> Main[main.lua]
+  Main --> Logger
+  Sampler[0.20 s sampler] --> MainState[_G.SwingBarMidnightState]
+  MainDB[SwingBarMidnightDB when present] --> Sampler
+  MainState --> UI[ui.lua]
+  Logger --> DebugDB[SwingBarMidnightDebuggerDB]
   Command["/swingdebug"] --> UI
+  UI --> Copy[Copy/clear windows]
 ```
 
-`SwingBarMidnightDB` is read conditionally; `SwingBarMidnightDebuggerDB` remains client runtime data and is not committed.
+`SwingBarMidnightDebuggerDB` is client runtime data; it is not a source or release artifact.

@@ -1,5 +1,7 @@
 # Architecture
 
-`main.lua` registers the debugger's event frame, performs periodic sampling, accesses `SwingBarMidnightDB` when available, and registers `/swingdebug`. `log.lua` initializes and bounds `SwingBarMidnightDebuggerDB` and exposes logging/clear operations through the shared namespace. `ui.lua` creates the main debug window and copy surface.
+The TOC loads [`log.lua`](log.lua) -> [`ui.lua`](ui.lua) -> [`main.lua`](main.lua). `log.lua` owns the bounded `SwingBarMidnightDebuggerDB`; `ui.lua` owns the hidden-on-load DIALOG/copy frames; `main.lua` owns event registration, `/swingdebug`, and the 0.20 s state sampler.
 
-This addon has a runtime relationship with `SwingBarMidnight` but no TOC `Dependencies` or `OptionalDeps` declaration. It can start independently; samples that require the main addon's database are conditional on that global table being present.
+The companion relationship is one-way and conditional: `main.lua` reads `_G.SwingBarMidnightState` and `_G.SwingBarMidnightDB` when present. The debugger can load independently and never supplies runtime services to `SwingBarMidnight`.
+
+The direct read anchors are `ui.lua:131` (`SwingBarMidnightState`) and `main.lua:89`/`main.lua:92` (`SwingBarMidnightState`/`SwingBarMidnightDB`); missing globals are expected and must remain non-fatal.
