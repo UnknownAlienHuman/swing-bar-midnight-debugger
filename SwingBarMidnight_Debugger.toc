@@ -1,0 +1,10 @@
+## Interface: 120000
+## Title: SwingBarMidnight Debugger
+## Notes: Debug UI + SavedVariables log for SwingBarMidnight glow anchoring and speed.
+## Author: Roth
+## Version: 0.1.7
+## SavedVariables: SwingBarMidnightDebuggerDB
+
+log.lua
+ui.lua
+main.lua
