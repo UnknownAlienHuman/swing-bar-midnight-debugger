@@ -17,3 +17,7 @@ Use `/swingdebug` to toggle the debugger UI. The UI exposes log viewing, copying
 ## Current development status
 
 No specific unfinished implementation item was found. The outstanding work is an in-game companion test: load both addons, exercise combat/recovery event registration, inspect sampling output, and verify the copy/clear controls.
+
+## License
+
+Licensed under the [MIT License](LICENSE). Bundled third-party components remain under their own notices.
