@@ -1,109 +1,157 @@
 -- SwingBarMidnight_Debugger/main.lua
+-- Event-driven observer for SwingBarMidnight's exported prediction state.
+
 local ADDON_NAME, ns = ...
+local Safe = ns.Safe
 
-local function OverlayActiveCount(spellId)
-  local f = _G.SpellActivationOverlayFrame
-  if not f or not f.GetChildren then return 0 end
+local latestSnapshot
+local pendingSnapshot = false
+local pendingReason
 
-  local cnt = 0
-  local kids = { f:GetChildren() }
-  local max = #kids
-  if max > 256 then max = 256 end
-
-  for i=1, max do
-    local c = kids[i]
-    if c and c.IsShown and c:IsShown() then
-      local sid = c.spellId or c.spellID
-      if type(sid) == "number" and sid == spellId then
-        cnt = cnt + 1
-      end
-    end
+local function ReadMainState()
+  local state = _G.SwingBarMidnightState
+  if not state or not Safe.CanAccess(state) or type(state) ~= "table" then return nil end
+  if type(issecrettable) == "function" then
+    local ok, secret = pcall(issecrettable, state)
+    if not ok or secret == true then return nil end
   end
-  return cnt
+  return state
+end
+
+local function ReadMainDB()
+  local db = _G.SwingBarMidnightDB
+  if not db or not Safe.CanAccess(db) or type(db) ~= "table" then return nil end
+  if type(issecrettable) == "function" then
+    local ok, secret = pcall(issecrettable, db)
+    if not ok or secret == true then return nil end
+  end
+  return db
+end
+
+local function OrdinaryNumber(value)
+  return Safe.SafeNumber(value) or "<unavailable>"
+end
+
+local function OrdinaryString(value)
+  return Safe.SafeString(value) or "<unavailable>"
+end
+
+local function OrdinaryBoolean(value)
+  local boolean = Safe.SafeBoolean(value)
+  if boolean == nil then return "<unavailable>" end
+  return boolean
+end
+
+function ns.CaptureSnapshot(reason)
+  local state = ReadMainState()
+  local db = ReadMainDB()
+  local snapshot = {
+    model = "predicted-cadence",
+    reason = Safe.SafeString(reason) or "manual",
+    mainLoaded = state ~= nil,
+  }
+
+  if state then
+    snapshot.inCombat = OrdinaryBoolean(state.inCombat)
+    snapshot.mhPeriod = OrdinaryNumber(state.mhPeriod)
+    snapshot.ohPeriod = OrdinaryNumber(state.ohPeriod)
+    snapshot.mhStatus = OrdinaryString(state.mhStatus)
+    snapshot.ohStatus = OrdinaryString(state.ohStatus)
+    snapshot.t0MH = OrdinaryNumber(state.t0MH)
+    snapshot.t0OH = OrdinaryNumber(state.t0OH)
+    snapshot.phaseReason = OrdinaryString(state.phaseReason)
+    snapshot.pendingApply = OrdinaryBoolean(state.pendingApply)
+  end
+
+  if db then
+    snapshot.enabled = OrdinaryBoolean(db.enabled)
+    snapshot.combatOnly = OrdinaryBoolean(db.showOnlyInCombat)
+    snapshot.showOffhand = OrdinaryBoolean(db.showOffhand)
+    snapshot.locked = OrdinaryBoolean(db.locked)
+  end
+
+  latestSnapshot = snapshot
+  ns.Log("SNAPSHOT", snapshot)
+  if ns.UI and ns.UI.Update then ns.UI:Update() end
+  return snapshot
+end
+
+function ns.GetLatestSnapshot()
+  return latestSnapshot
+end
+
+local function QueueSnapshot(reason)
+  pendingReason = Safe.SafeString(reason) or "event"
+  if pendingSnapshot then return end
+  pendingSnapshot = true
+
+  local function Run()
+    pendingSnapshot = false
+    local queuedReason = pendingReason
+    pendingReason = nil
+    ns.CaptureSnapshot(queuedReason)
+  end
+
+  if C_Timer and type(C_Timer.After) == "function" then
+    C_Timer.After(0, Run)
+  else
+    Run()
+  end
 end
 
 ns.InitLogger()
 if ns.UI and ns.UI.Init then ns.UI:Init() end
 
-local ev = CreateFrame("Frame")
+local events = CreateFrame("Frame")
+events:RegisterEvent("PLAYER_LOGIN")
+events:RegisterEvent("PLAYER_REGEN_DISABLED")
+events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+if type(events.RegisterUnitEvent) == "function" then
+  events:RegisterUnitEvent("UNIT_ATTACK_SPEED", "player")
+else
+  events:RegisterEvent("UNIT_ATTACK_SPEED")
+end
 
-ev:SetScript("OnEvent", function(_, event, ...)
-  if event == "PLAYER_REGEN_DISABLED" then
-    ns.Log("COMBAT", { enter=1 })
+events:SetScript("OnEvent", function(_, event, ...)
+  if event == "PLAYER_LOGIN" then
+    QueueSnapshot("login")
+  elseif event == "PLAYER_REGEN_DISABLED" then
+    QueueSnapshot("combat-enter")
   elseif event == "PLAYER_REGEN_ENABLED" then
-    ns.Log("COMBAT", { leave=1 })
-  elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" or event == "SPELL_ACTIVATION_OVERLAY_SHOW" then
-    local spellId = ...
-    ns.Log("OVERLAY_SHOW", { ev=event, spellId=spellId })
-  elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" or event == "SPELL_ACTIVATION_OVERLAY_HIDE" then
-    local spellId = ...
-    ns.Log("OVERLAY_HIDE", { ev=event, spellId=spellId })
+    QueueSnapshot("combat-leave")
+  elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+    QueueSnapshot("equipment-change")
   elseif event == "UNIT_ATTACK_SPEED" then
     local unit = ...
-    if unit == "player" then
-      local mh, oh = UnitAttackSpeed("player")
-      ns.Log("SPEED", { mh=mh, oh=oh })
-    end
-  elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-    local unit, _, spellId = ...
-    if unit == "player" then
-      ns.Log("CAST_OK", { spellId=spellId })
+    local safeUnit = Safe.SafeString(unit)
+    if safeUnit == nil or safeUnit == "player" then
+      QueueSnapshot("attack-speed-change")
     end
   end
-
-  if ns.UI and ns.UI.Update then ns.UI:Update() end
-end)
-
-local function RegisterEventsNow()
-  ev:RegisterEvent("PLAYER_REGEN_DISABLED")
-  ev:RegisterEvent("PLAYER_REGEN_ENABLED")
-  ev:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")
-  ev:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")
-  ev:RegisterEvent("SPELL_ACTIVATION_OVERLAY_SHOW")
-  ev:RegisterEvent("SPELL_ACTIVATION_OVERLAY_HIDE")
-  ev:RegisterEvent("UNIT_ATTACK_SPEED")
-  ev:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
-  ns.Log("DBG", { msg="events registered" })
-end
-
--- Avoid forbidden RegisterEvent if loaded in combat (/reload in combat)
-if not InCombatLockdown() then
-  RegisterEventsNow()
-else
-  local defer = CreateFrame("Frame")
-  defer:SetScript("OnUpdate", function(self)
-    if not InCombatLockdown() then
-      self:SetScript("OnUpdate", nil)
-      RegisterEventsNow()
-    end
-  end)
-end
-
-local sampler = CreateFrame("Frame")
-local acc=0
-sampler:SetScript("OnUpdate", function(_, elapsed)
-  acc = acc + elapsed
-  if acc < 0.20 then return end
-  acc = 0
-
-  local st = _G.SwingBarMidnightState
-  if type(st) ~= "table" then return end
-
-  local mainDB = _G.SwingBarMidnightDB
-  local spellId = 49020
-  if type(mainDB) == "table" and type(mainDB.anchorSpellIDs) == "string" then
-    local first = mainDB.anchorSpellIDs:match("(%d+)")
-    if first then spellId = tonumber(first) or spellId end
-  end
-
-  st.overlayCount = OverlayActiveCount(spellId)
-  if ns.UI and ns.UI.Update then ns.UI:Update() end
 end)
 
 SLASH_SWINGDEBUG1 = "/swingdebug"
-SlashCmdList["SWINGDEBUG"] = function()
-  if ns.UI and ns.UI.Toggle then ns.UI:Toggle() end
+SlashCmdList.SWINGDEBUG = function(message)
+  message = Safe.SafeString(message) or ""
+  message = message:lower():gsub("^%s+", ""):gsub("%s+$", "")
+  if message == "snapshot" then
+    ns.CaptureSnapshot("slash")
+  elseif message == "clear" then
+    ns.Clear()
+    if ns.UI and ns.UI.Update then ns.UI:Update() end
+  elseif message == "copy" then
+    if ns.UI and ns.UI.ShowCopy then ns.UI:ShowCopy() end
+  else
+    if ns.UI and ns.UI.Toggle then ns.UI:Toggle() end
+  end
 end
 
 print("SwingBarMidnight Debugger loaded. /swingdebug")
-ns.Log("DBG", { msg="debugger loaded" })
+ns.Log("DEBUGGER", { status = "loaded", model = "predicted-cadence" })
+
+ns.Runtime = {
+  QueueSnapshot = QueueSnapshot,
+  GetEventFrame = function() return events end,
+  IsSnapshotPending = function() return pendingSnapshot end,
+}
