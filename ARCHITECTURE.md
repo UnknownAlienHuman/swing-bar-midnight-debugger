@@ -1,7 +1,75 @@
-# Architecture
+# SwingBarMidnight Prediction Debugger architecture
 
-The TOC loads [`log.lua`](log.lua) -> [`ui.lua`](ui.lua) -> [`main.lua`](main.lua). `log.lua` owns the bounded `SwingBarMidnightDebuggerDB`; `ui.lua` owns the hidden-on-load DIALOG/copy frames; `main.lua` owns event registration, `/swingdebug`, and the 0.20 s state sampler.
+## Ownership
 
-The companion relationship is one-way and conditional: `main.lua` reads `_G.SwingBarMidnightState` and `_G.SwingBarMidnightDB` when present. The debugger can load independently and never supplies runtime services to `SwingBarMidnight`.
+`log.lua` owns the SavedVariables schema, access boundary, bounded sanitization, log retention, clear, and deterministic text formatting.
 
-The direct read anchors are `ui.lua:131` (`SwingBarMidnightState`) and `main.lua:89`/`main.lua:92` (`SwingBarMidnightState`/`SwingBarMidnightDB`); missing globals are expected and must remain non-fatal.
+`main.lua` owns event registration, snapshot coalescing, the whitelist that may be copied from SwingBarMidnight prediction state, slash commands, and UI notifications.
+
+`ui.lua` owns the on-demand window and copy panel. It renders only the latest sanitized snapshot and bounded formatted log.
+
+SwingBarMidnight remains the owner of attack-speed access, predicted periods, local phase, combat visibility, and frame settings. The debugger is read-only with respect to the main addon.
+
+## Load order
+
+```text
+SwingBarMidnight_Debugger.toc
+  -> dependency SwingBarMidnight
+  -> log.lua
+  -> ui.lua
+  -> main.lua
+```
+
+## Snapshot boundary
+
+The debugger reads only `_G.SwingBarMidnightState` and `_G.SwingBarMidnightDB`, then copies a closed set of ordinary fields. Every field is checked through the logger access helpers before type/format/storage.
+
+The debugger does not retain the source tables or arbitrary keys. Inaccessible fields become `<unavailable>`.
+
+## Events
+
+```text
+PLAYER_LOGIN
+PLAYER_REGEN_DISABLED
+PLAYER_REGEN_ENABLED
+UNIT_ATTACK_SPEED player
+PLAYER_EQUIPMENT_CHANGED
+```
+
+Event bursts coalesce into one `C_Timer.After(0)` snapshot. This delay permits the main addon to process the same event before the debugger copies its exported state. There is no repeating timer or `OnUpdate`.
+
+## Log schema
+
+Schema v2 stores an array of sanitized entries:
+
+```text
+t: ordinary timestamp
+tag: bounded ordinary string
+data: bounded ordinary primitives/tables
+```
+
+Limits:
+
+- default 500 entries;
+- configurable range 50–2,000;
+- 24 fields per table;
+- depth 3;
+- 240 characters per string;
+- cycle detection;
+- bounded export length.
+
+## Explicit non-ownership
+
+The debugger does not inspect or log:
+
+- SpellActivationOverlay frames/events/children;
+- aura data or aura events;
+- action bars, macros, range or spellcasts;
+- combat log;
+- actual hit timestamps;
+- frame visibility as timing evidence;
+- removed `lastAnchor`, `suppressUntil`, or `overlayCount` values.
+
+## Evidence boundary
+
+Snapshots describe SwingBarMidnight's predicted-cadence model only. They do not convert prediction into observed swing evidence. Local regression proves sanitization/coalescing/bounds against mocks; live dependency ordering and UI behavior remain separate gates.
