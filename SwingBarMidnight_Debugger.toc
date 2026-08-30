@@ -1,9 +1,11 @@
-## Interface: 120000
-## Title: SwingBarMidnight Debugger
-## Notes: Debug UI + SavedVariables log for SwingBarMidnight glow anchoring and speed.
+## Interface: 120100
+## Title: SwingBarMidnight Prediction Debugger
+## Notes: Event-driven sanitized observer for SwingBarMidnight's predicted MH/OH cadence state.
 ## Author: Roth
-## Version: 0.1.7
+## Version: 0.2.0
 ## SavedVariables: SwingBarMidnightDebuggerDB
+## Dependencies: SwingBarMidnight
+## X-Verified-Build: 12.1.0.69497
 
 log.lua
 ui.lua
