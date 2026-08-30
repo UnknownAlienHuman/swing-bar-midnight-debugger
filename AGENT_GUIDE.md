@@ -1,62 +1,114 @@
-# SwingBarMidnight Debugger agent guide
+# SwingBarMidnight Prediction Debugger agent guide
 
-## Start here
+## Contract
 
-Read [`SwingBarMidnight_Debugger.toc`](SwingBarMidnight_Debugger.toc), then [`log.lua`](log.lua), [`ui.lua`](ui.lua), and [`main.lua`](main.lua). The TOC order is logger -> UI -> event/sampler main; the debugger is a companion, not a library consumed by `SwingBarMidnight`.
+This addon is a sanitized observer of SwingBarMidnight's **prediction state**. It must never become an alternate swing detector.
 
-TOC release metadata is `0.1.7` (`SwingBarMidnight_Debugger.toc`, `## Version`).
+Target:
 
-## Load order and execution path
+- Retail 12.1.0;
+- Interface `120100`;
+- version `0.2.0`;
+- required dependency `SwingBarMidnight`;
+- no GitHub Actions workflow.
 
-Complete `loadedFiles` inventory (root `docs/addon-architecture.json`, in execution order):
+## Hard prohibitions
+
+Do not add:
 
 ```text
-log.lua
-ui.lua
-main.lua
+OnUpdate or repeating sampler
+SpellActivationOverlay events or frame scans
+GetChildren / GetNumChildren
+UNIT_AURA or raw aura APIs
+combat-log processing
+action-slot, macro, range or spellcast inference
+raw UnitAttackSpeed persistence
+actual-hit claims
+arbitrary copy of SwingBarMidnightState/DB
 ```
 
-`log.lua` creates/merges `SwingBarMidnightDebuggerDB`, exposes `ns.InitLogger`, `ns.Log`, `ns.Clear`, and `ns.Format`. `ui.lua` exposes `ns.UI:Init`, `Toggle`, `Update`, and `ShowCopy`, creating the main DIALOG frame on load but hiding it. `main.lua` initializes logger/UI, registers combat, overlay, speed, and cast events (deferring registration out of combat), samples every 0.20 s, reads `_G.SwingBarMidnightState` and the first configured anchor spell from `_G.SwingBarMidnightDB`, and updates the UI.
+The debugger may copy only the current closed whitelist in `main.lua`.
 
-The cross-addon reads are anchored at `ui.lua:131` (`SwingBarMidnightState`) and `main.lua:89`/`main.lua:92` (`SwingBarMidnightState`/`SwingBarMidnightDB`).
+## Access and logging
 
-## State and surfaces
+`log.lua` must decide accessibility before type checks, stringification, comparison, concatenation, iteration, key use, or persistence.
 
-- SavedVariables: `SwingBarMidnightDebuggerDB.log` (array) and `maxLines` (default 6000). `ns.Format` limits output characters, not persisted entry count alone.
-- Reads main addon state/DB conditionally; missing `SwingBarMidnight` leaves the debugger functional but with no timing sample.
-- Slash: `/swingdebug` toggles the window. UI buttons clear log, show copy dialog, and display combat/speed/anchor/suppression/overlay count.
-- `OverlayActiveCount` inspects up to 256 children of `_G.SpellActivationOverlayFrame` for the selected anchor spell.
+- inaccessible scalar → `<inaccessible>`;
+- inaccessible key → `<inaccessible-key>`;
+- secret table → `<secret-table>`;
+- unsupported object → ordinary type marker;
+- cycle/depth/field/string limits remain finite.
 
-## Dependencies and relationships
+Do not use `pcall(tostring, rawValue)` as an access test. `pcall` is error containment only.
 
-There is no `Dependencies`/`OptionalDeps` line in the TOC. Runtime relationship is one-way: debugger -> `_G.SwingBarMidnightState`/`SwingBarMidnightDB`. The intended load-order/schema contract is tracked in [GitHub issue #2](https://github.com/UnknownAlienHuman/swing-bar-midnight-debugger/issues/2). Do not add reverse calls or make the main addon require this debug addon. The debugger also uses `GetSwingSpeeds`, overlay globals, and the same combat-sensitive event names.
+SavedVariables must contain ordinary bounded primitives/tables only. Never store frames, userdata, functions, threads, raw state tables, event payloads, or inaccessible proxies.
 
-Falsification notes: the debugger has no `COMBAT_LOG_EVENT_UNFILTERED` registration, no Masque/CDM integration, and no namespaced Blizzard API calls detected by the root inventory. Its actual update scripts are the combat-registration deferral (`main.lua:74`) and 0.20 s sampler (`main.lua:84`), not a per-frame log writer.
+## Event model
 
-## Change routing
+Allowed snapshot triggers:
 
-- Log schema, retention, formatting: [`log.lua`](log.lua), especially `Ensure`, `Trim`, `ns.Log`, `ns.Format`.
-- Window, copy controls and displayed fields: [`ui.lua`](ui.lua), `UI:Init`, `UI:Update`, `UI:ShowCopy`.
-- Events, sampling, anchor spell selection, slash registration: [`main.lua`](main.lua), `RegisterEventsNow`, `OverlayActiveCount`, sampler `OnUpdate`.
-- If main addon state fields change, update `main.lua` defensively and document the optional relationship; never rename the main state's exported globals without coordinated changes.
+```text
+PLAYER_LOGIN
+PLAYER_REGEN_DISABLED
+PLAYER_REGEN_ENABLED
+UNIT_ATTACK_SPEED player
+PLAYER_EQUIPMENT_CHANGED
+manual snapshot
+```
 
-## Invariants and risks
+`QueueSnapshot` coalesces a burst into one zero-delay callback. Do not convert it to a repeating timer.
 
-- The debugger must tolerate missing main addon globals and missing overlay frame children.
-- Event registration is deferred while in combat; preserve this guard to avoid forbidden registration on combat reload.
-- Sampling is periodic (0.20 s), and log retention is bounded by `maxLines`; do not add per-frame log writes.
-- `SwingBarMidnightDebuggerDB` is runtime data and must not be copied into repository docs or releases.
-- `ui.lua` reads `GetSwingSpeeds` directly; this may be unavailable or differ from the main addon's cached values. Treat displayed speed as observational, not authoritative.
-- `OverlayActiveCount` scans child frame fields that are Blizzard-internal and patch-sensitive.
+## Snapshot whitelist
+
+Current fields:
+
+```text
+model
+reason
+mainLoaded
+inCombat
+mhPeriod / ohPeriod
+mhStatus / ohStatus
+t0MH / t0OH
+phaseReason
+pendingApply
+enabled
+combatOnly
+showOffhand
+locked
+```
+
+Adding a field requires proving that it is ordinary exported prediction state and does not reveal a managed/private/secret source or claim actual swing evidence.
+
+## UI
+
+`ui.lua` renders the latest sanitized snapshot and `ns.Format` output. It does not call gameplay APIs. The window updates only when opened, when a snapshot arrives, or after clear/copy actions. Dragging is blocked in combat.
+
+The copy panel uses bounded sanitized log text. Keep the note that no actual hit evidence is collected.
+
+## Commands
+
+```text
+/swingdebug
+/swingdebug snapshot
+/swingdebug clear
+/swingdebug copy
+```
 
 ## Verification
 
-1. Verify TOC references and parse Lua.
-2. Install/load both addons; `/reload`; confirm `print` banner and `/swingdebug`.
-3. Exercise combat enter/leave, overlay show/hide, speed/equipment, and spellcast events; confirm entries appear in the UI and persist.
-4. Test Clear, Copy, Escape, scroll, bounded formatting, and missing-main-addon behavior.
-5. Compare sampled values with `_G.SwingBarMidnightState`; confirm no taint/Lua error and no unbounded SavedVariables growth.
+Local:
 
-## Uncertain or version-sensitive claims
+```text
+texlua --luaconly log.lua ui.lua main.lua tests/test_safe_prediction_debugger_12_1.lua
+texlua tests/test_safe_prediction_debugger_12_1.lua
+```
 
-`SpellActivationOverlayFrame` child layout/fields, `GetSwingSpeeds`, overlay event variants, and protected event-registration rules are client-build dependent. Verify against the live client before treating debugger output as authoritative.
+Expected:
+
+```text
+PASS: debugger logs only sanitized prediction snapshots, coalesces events, and has no overlay scan or polling loop
+```
+
+Live gates: dependency load, event freshness, inaccessible transitions, UI/copy/clear, log retention, combat/reload, taint/errors, and SavedVariables inspection. Prediction snapshots are not actual swing-hit evidence.
